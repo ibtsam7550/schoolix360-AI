@@ -1,283 +1,169 @@
-import json
-import base64
 import os
+from pathlib import Path
+from html import escape
 import time
 import uuid
-from html import escape
-from pathlib import Path
+import requests
 import streamlit as st
-from core import (load_data, Search, ai, answer_prompt, validate_answer, quiz_prompt, validate_quiz,
-                  grade, record_attempt, import_history, BLUEPRINT, paper_prompt, validate_paper_group, list_text_models)
-from pdf_export import export_pdf,paper_pdf
+from core import load_sections, retrieve, generate, assessment_prompt, parse_questions, export_test
 
-st.set_page_config(page_title='Schoolix360 · Learn your way',page_icon='✦',layout='wide')
-st.markdown('''<style>
-.block-container{max-width:1180px;padding-top:1.8rem;padding-bottom:2rem}
-h1,h2,h3{letter-spacing:-.035em}
-.hero{background:linear-gradient(120deg,#102e38,#164d50);padding:32px 36px;border-radius:22px;color:#fff;margin-bottom:24px;position:relative;overflow:hidden}
-.hero:after{content:'✦';position:absolute;right:38px;top:-25px;font-size:180px;color:#ffffff0c}
-.eyebrow{font-size:11px;letter-spacing:2.2px;text-transform:uppercase;font-weight:700;color:#9cded3}
-.hero h1{font-size:38px;color:white;margin:8px 0}.hero p{color:#d0e2e4;max-width:650px;margin-bottom:0;font-size:16px}
-.pill{display:inline-block;border:1px solid #ffffff30;border-radius:30px;padding:5px 12px;font-size:12px;margin-top:18px;margin-right:8px;color:#dff7ef}
-.card{color:inherit;background:transparent;border:1px solid #80908a60;border-radius:16px;padding:22px;height:100%;margin:8px 0 20px}
-.card h3{font-size:20px;margin:8px 0;color:inherit!important}.card p{font-size:14px;color:inherit;opacity:.85}.card .number{color:inherit;font-size:12px;font-weight:700;letter-spacing:1px}
-[data-testid="stMetric"]{background:transparent;border:1px solid #80908a60;border-radius:14px;padding:16px}
-.stButton>button{border-radius:10px;min-height:42px}.stDownloadButton>button{border-radius:10px}
-[data-testid="stExpander"]{border-radius:12px}
-.label{color:inherit;font-size:12px;letter-spacing:1.5px;text-transform:uppercase}
-.urdu{direction:rtl;text-align:right;font-family:'Noto Nastaliq Urdu','DejaVu Sans',serif;font-size:20px;line-height:2.1;white-space:pre-wrap;background:transparent;color:inherit;padding:24px;border-radius:16px;border:1px solid #dce5e0}
-@media(max-width:650px){.hero{padding:22px}.hero h1{font-size:28px}.block-container{padding:1rem}.hero:after{display:none}}
-</style>''',unsafe_allow_html=True)
+st.set_page_config(page_title='Schoolix360 · Your English study room', page_icon='✦', layout='wide')
+st.markdown('<style>'+Path(__file__).with_name('style.css').read_text()+'</style>',unsafe_allow_html=True)
+st.markdown('<div class="brandbar"><div class="wordmark"><span class="brandmark">✦</span>Schoolix360 <span style="font-weight:400;opacity:.6">AI</span></div><div class="edition">English 9 · Student edition</div></div>',unsafe_allow_html=True)
+st.markdown('''<div class="hero"><div class="eyebrow">Your own space. Your own pace.</div><h1>Make room for<br><span class="highlight">your next breakthrough.</span></h1><p>A little explanation. A little practice. A clearer understanding.<br>Your English study room, one topic at a time.</p><div class="tags"><span class="tag">English + Urdu</span><span class="tag">Topic-based practice</span><span class="tag">Source notes you can check</span></div><svg class="book-art" viewBox="0 0 160 190" aria-hidden="true"><path d="M22 32 Q50 16 80 33 Q111 16 140 32 L140 150 Q110 136 80 153 Q50 136 22 150Z" fill="none" stroke="#b5e4db" stroke-width="3"/><path d="M80 33V153M34 52L65 53M34 68L65 69M34 84L60 85M96 53L127 52M96 69L127 68M96 85L122 84" stroke="#b5e4db" stroke-width="3"/><path d="M111 116l7-17 7 17 17 7-17 7-7 17-7-17-17-7z" fill="#b5e4db"/></svg></div>''',unsafe_allow_html=True)
 
 @st.cache_data
-def urdu_font():
-    return base64.b64encode((Path(__file__).parent/'assets/NotoNaskhArabic-Regular.ttf').read_bytes()).decode()
-st.markdown("<style>@font-face{font-family:SchoolixUrdu;src:url(data:font/ttf;base64,"+urdu_font()+") format('truetype');}.urdu{font-family:SchoolixUrdu,serif;}</style>",unsafe_allow_html=True)
+def notes():
+    return load_sections()
 
-@st.cache_resource
-def resources():
-    rows,units=load_data();return rows,units,Search(rows)
-rows,units,search=resources();byid={r['id']:r for r in rows}
-
-def setting(name,default=''):
-    try:return st.secrets.get(name,os.getenv(name,default))
-    except FileNotFoundError:return os.getenv(name,default)
-key=setting('GEMINI_API_KEY');model=setting('GEMINI_MODEL','').strip()
-for field,value in [('history',[]),('paper',{}),('nav','Overview')]:
-    if field not in st.session_state:st.session_state[field]=value
-
-with st.sidebar:
-    st.markdown('### ✦ Schoolix360')
-    st.caption('YOUR SPACE TO GROW')
-    st.divider()
-    selected=st.selectbox('Choose your unit',units,format_func=lambda x:f"{'Unit '+str(x['id']) if x['id']<=11 else 'Review'} · {x['title']}")
-    language=st.selectbox('Explain in',['Simple English','Urdu','Roman Urdu'])
-    st.caption('Grammar printed inside this English textbook is included. The separate Grammar and Composition book is excluded.')
-    st.divider()
-    st.markdown('**A little practice. A clearer tomorrow.**')
-    st.caption('No student registration. Save a progress file to continue on another day.')
-    if not key:st.info('Browse the book now. Add your Gemini key in Secrets to enable AI.')
-    setup=str(setting('ENABLE_MODEL_SETUP','false')).lower()=='true'
-    if setup:
-        with st.expander('AI connection setup',expanded=True):
-            st.caption('Temporary setup panel. Turn ENABLE_MODEL_SETUP off after saving the working model in Secrets. Listing does not prove free quota or JSON support.')
-            if st.button('Load available Gemini models',disabled=not key):
-                try:
-                    with st.spinner('Reading the Google model catalogue…'):
-                        st.session_state['available_models']=list_text_models(key)
-                    st.session_state.pop('model_candidate',None)
-                except ValueError as exc:st.error(str(exc))
-            choices=st.session_state.get('available_models',[])
-            if choices:
-                candidate=st.selectbox('Model to test',choices,key='model_candidate')
-                if st.button('Test selected model'):
-                    try:
-                        with st.spinner('Making one small JSON generation request…'):
-                            check=ai(key,candidate,'Connection test: return exactly {"ok":true}.',[])
-                        if check!={'ok':True}:raise ValueError('The model did not return the expected JSON. Try another candidate.')
-                        st.session_state['tested_model']=candidate
-                        st.success('JSON generation succeeded. Save this model in Secrets:')
-                        st.code('GEMINI_MODEL = '+json.dumps(candidate)+'\nENABLE_MODEL_SETUP = false',language='toml')
-                    except ValueError as exc:st.error(str(exc))
-            elif 'available_models' in st.session_state:
-                st.warning('No matching text-generation candidates were returned. Check API project access in Google AI Studio.')
-
-unit=selected['id'];unit_rows=[r for r in rows if r['unit']==unit]
-st.markdown(f'''<div class="hero"><div class="eyebrow">English 9 · Punjab textbook · Student edition</div><h1>Learn your way.<br>Grow with every attempt.</h1><p>Understand a lesson, discover what needs practice, and take your next step with confidence.</p><span class="pill">English + Urdu</span><span class="pill">Textbook sources</span><span class="pill">Practice that responds to you</span></div>''',unsafe_allow_html=True)
-nav=st.radio('Your workspace',['Overview','Learn & ask','Practice','My progress','Practice paper'],horizontal=True,key='nav',label_visibility='collapsed')
-st.divider()
-
-def call(task,sources):
-    if not key:st.error('Add GEMINI_API_KEY in Streamlit Settings → Secrets.');return None
-    if not model:st.error('Set GEMINI_MODEL in Secrets. Enable ENABLE_MODEL_SETUP temporarily to list and test models.');return None
-    if time.time()-st.session_state.get('last_call',0)<2:st.info('Please wait a moment before the next request.');return None
-    st.session_state.last_call=time.time()
+def setting(name, default=''):
     try:
-        with st.spinner('Finding the next step in your learning…'):return ai(key,model,task,sources)
-    except ValueError as exc:st.error(str(exc));return None
+        return st.secrets.get(name, os.getenv(name, default))
+    except FileNotFoundError:
+        return os.getenv(name, default)
 
-def source_panel(ids):
-    with st.expander('Check the textbook source'):
-        st.caption('Printed page = OCR page minus 4, inferred from the contents and unit starts. Original book PDF not provided; page labels and OCR wording are not verified.')
-        for sid in ids:
-            r=byid[sid];st.markdown(f"**{r['title']} · inferred printed p. {r['page']}**")
-            st.caption(f"Source {sid} · OCR page {r['ocr_page']}");st.text(r['text'])
+key = setting('GEMINI_API_KEY')
+model = setting('GEMINI_MODEL', 'gemini-3.8-flash')
+all_notes = notes()
+with st.sidebar:
+    st.markdown('### ✦ Your study room')
+    st.caption('PICK A CHAPTER. FIND YOUR FOCUS.')
+    unit = st.selectbox('Unit', list(dict.fromkeys(s['unit'] for s in all_notes)))
+    language = st.selectbox('Explanation language', ['English', 'Urdu', 'Roman Urdu'])
+    st.caption('Choose your explanation language. Use English keywords when searching the notes.')
+    st.caption('No account needed. Quizzes and results last for this session only.')
+    if st.button('Clear session work'):
+        for field in ['quiz', 'result', 'test', 'reply', 'last_request']:
+            st.session_state.pop(field, None)
+        st.rerun()
+selected = [s for s in all_notes if s['unit'] == unit]
+st.markdown('<div class="overline">Currently exploring</div><div class="unit-heading">'+escape(unit.split(': ',1)[-1])+'</div><div class="room-note">Choose a topic below, then learn, practise, or create a test.</div>',unsafe_allow_html=True)
+topic = st.selectbox('Your focus topic', [s['topic'] for s in selected])
+section = next(s for s in selected if s['topic'] == topic)
+scope = (unit, topic, language)
+if st.session_state.get('scope') != scope:
+    for field in ['quiz', 'result', 'test', 'reply']:
+        st.session_state.pop(field, None)
+    st.session_state.scope = scope
 
-def render_answer(data):
-    if language=='Urdu':st.markdown(f'<div class="urdu">{escape(data["answer"])}</div>',unsafe_allow_html=True)
-    else:st.markdown(data['answer'])
-    if data['unclear']:st.info('The supplied text is unclear or insufficient. Check the original book before relying on this answer.')
-    if data['source_ids']:source_panel(data['source_ids'])
+def call(task, sources):
+    if not key:
+        st.error('Add GEMINI_API_KEY in Streamlit app settings → Secrets, then restart the app.')
+        return None
+    if time.time() - st.session_state.get('last_request', 0) < 4:
+        st.info('Please wait a few seconds before another AI request.')
+        return None
+    st.session_state.last_request = time.time()
+    try:
+        with st.spinner('Preparing your learning material…'):
+            return generate(key, model, task, sources)
+    except RuntimeError as exc:
+        st.error(str(exc))
+        return None
+    except (requests.RequestException, ValueError):
+        # Do not print raw HTTP request exceptions, which may contain credentials.
+        st.error('The AI request could not finish. Check model access, the API key, and quota in Google AI Studio. If quota is exhausted, retry later. Check Streamlit Secrets for the exact model ID.')
+        return None
 
-if nav=='Overview':
-    attempts=st.session_state.history
-    cols=st.columns(3)
-    for col,metric,value in zip(cols,['Textbook units','Practice attempts','Questions attempted'],[11,len(attempts),sum(a['total'] for a in attempts)]):col.metric(metric,value)
-    cols=st.columns(3)
-    for col,num,title,desc in zip(cols,['01 / UNDERSTAND','02 / DISCOVER','03 / IMPROVE'],['A lesson that makes sense','Find your learning gaps','Make your next attempt count'],['Ask in English or Urdu. Read an explanation and inspect the source excerpt.','Take a short quiz. See why each answer works and where you need more practice.','Retry the concepts you missed, using fresh questions rather than repeating the same test.']):
-        col.markdown(f'<div class="card"><div class="number">{num}</div><h3>{title}</h3><p>{desc}</p></div>',unsafe_allow_html=True)
-    st.subheader('Your current chapter')
-    st.write(f"**{selected['title']}** · inferred printed pages {selected['start']}–{selected['end']}")
-    st.info('Start in Learn & ask, then take a five-question check in Practice. The app uses only the English textbook you supplied.')
-    with st.expander('What this edition includes'):
-        st.write('All 11 units and both reviews are available for learning. The supplied pairing scheme excludes units 5, 8 and 10 from its paper scope; practice-paper generation follows that exclusion.')
-        st.write('Source text is OCR and contains errors. References help you inspect evidence; they do not guarantee an answer is correct. AI scoring of written work is not included; use the model answers for self-review.')
+def show_sources(sources):
+    with st.expander('Study notes used and supplied page references'):
+        for s in sources:
+            st.markdown(f"**[{s['id']}] {s['topic']}**")
+            st.caption(f"{s['unit']} | Supplied printed page: {s['printedPage']} | Supplied PDF page: {s['pdfPage']} (unverified)")
+            st.write(s['text'])
 
-elif nav=='Learn & ask':
-    st.subheader(selected['title'])
-    page=st.selectbox('Explore a textbook page',list(dict.fromkeys(r['page'] for r in unit_rows)),format_func=lambda p:f'Inferred printed page {p}')
-    selected_rows=[r for r in unit_rows if r['page']==page]
-    with st.expander('Read the OCR text for this page',expanded=False):
-        for r in selected_rows:st.text(r['text'])
-    style=st.selectbox('How would you like to learn?',['Explain this page simply','Explain the vocabulary on this page','Help me understand the passage or poem','Explain the textbook exercise on this page'])
-    scope=(unit,page,language)
-    if st.session_state.get('lesson_scope')!=scope:
-        st.session_state.pop('lesson',None);st.session_state.lesson_scope=scope
-    if st.button('Explain this page',type='primary',use_container_width=True):
-        data=call(answer_prompt(style,language),selected_rows)
-        if data is not None:
-            try:st.session_state.lesson=validate_answer(data,selected_rows)
-            except ValueError as exc:st.error(str(exc))
+for col,label,value,desc in zip(st.columns(3),['YOUR BOOK SELECTION','CHAPTER TOPICS','EXPLANATION LANGUAGE'],[str(len(set(s['unit'] for s in all_notes)))+' units',str(len(selected))+' topics',language],['From your supplied starter notes','Explore at your own pace','Choose in the sidebar']):
+    col.markdown('<div class="mini-card"><div class="overline">'+escape(label)+'</div><div class="value">'+escape(value)+'</div><div class="description">'+escape(desc)+'</div></div>',unsafe_allow_html=True)
+learn, quiz, test = st.tabs(['Learn & Ask', 'Quiz Practice', 'Create a Test'])
+with learn:
+    st.markdown('<div class="lesson-caption">01 / Understand</div>',unsafe_allow_html=True)
+    st.subheader(topic)
+    st.caption('Start with an explanation, then ask a question in your own words.')
+    if st.button('Teach me this topic', type='primary'):
+        answer = call(f'Explain this topic simply in {language}. Include one vocabulary word with its meaning.', [section])
+        if answer:
+            st.session_state.reply = (answer, [section])
     with st.form('ask'):
-        question=st.text_area('Or ask a question about this chapter',placeholder='What does the poet mean by the inward eye?',max_chars=1000)
-        submit=st.form_submit_button('Ask my study companion')
-    if submit:
-        query=question.strip()
-        if not query:st.warning('Write your question first.')
+        question = st.text_input('Ask about this unit using English keywords', placeholder='What is a gerund?', max_chars=700)
+        ask = st.form_submit_button('Ask the tutor')
+    if ask:
+        if not question.strip():
+            st.warning('Please enter a question.')
         else:
-            if any('\u0600'<=c<='\u06ff' for c in query):
-                translated=call('Translate this student question into a short English search query. Return {"query":"..."}. Question: '+query,[])
-                query=translated.get('query','') if isinstance(translated,dict) else ''
-                # Translation followed by answer is one intentional user action.
-                st.session_state.last_call=0
-            sources=search.find(query,unit,k=6) if isinstance(query,str) and query else []
-            if not sources:st.info('No useful match in this chapter. Try another keyword, a specific page, or another chapter.')
+            sources = retrieve(question, selected)
+            if not sources:
+                st.session_state.reply = ('I could not find relevant notes in this unit. Try English keywords or select another unit.', [])
             else:
-                data=call(answer_prompt(question,language),sources)
-                if data is not None:
-                    try:st.session_state.lesson=validate_answer(data,sources)
-                    except ValueError as exc:st.error(str(exc))
-    if 'lesson' in st.session_state:render_answer(st.session_state.lesson)
+                answer = call(f'Answer in {language}. Student question: {question}', sources)
+                if answer:
+                    st.session_state.reply = (answer, sources)
+    if 'reply' in st.session_state:
+        answer, sources = st.session_state.reply
+        if language == 'Urdu':
+            st.markdown('<div class="urdu-answer">'+escape(answer)+'</div>',unsafe_allow_html=True)
+        else:
+            st.markdown(answer)
+        show_sources(sources)
+    else:
+        st.markdown('<div class="empty-state"><div class="symbol">✧</div><h3>Understanding starts with a question.</h3><p>Choose “Teach me this topic” for a guided explanation, or ask about something you find difficult. You can inspect the supplied notes below.</p></div>',unsafe_allow_html=True)
+        show_sources([section])
 
-elif nav=='Practice':
-    st.subheader('Small checks. Meaningful progress.')
-    st.caption('Scores use an AI-generated answer key. Review the explanations and cited OCR text if an answer seems wrong.')
-    if st.session_state.get('quiz_unit')!=unit:
-        st.session_state.pop('quiz',None);st.session_state.pop('responses',None);st.session_state.quiz_unit=unit
-    page=st.selectbox('Practice from this page',list(dict.fromkeys(r['page'] for r in unit_rows)),format_func=lambda p:f'Inferred printed page {p}')
-    difficulty=st.selectbox('Starting difficulty',['Gentle start','Standard','Challenge'])
-    a,b=st.columns(2)
-    start=a.button('Start a 5-question check',type='primary',use_container_width=True)
-    wrong=[]
-    if 'quiz' in st.session_state and 'responses' in st.session_state:
-        qz=st.session_state.quiz
-        wrong=[dict(q,selected_answer=q['options'][r]) for q,r in zip(qz['items'],st.session_state.responses) if q['answer']!=r]
-    if not wrong and 'responses' not in st.session_state:
-        previous=[h for h in st.session_state.history if h['unit']==unit]
-        if previous:
-            wrong=[d for d in previous[-1]['details'] if not d['correct']]
-    retry=b.button('Practise my mistakes',disabled=not wrong,use_container_width=True)
-    if start or retry:
-        sources=[r for r in unit_rows if r['page']==page] if start else [byid[i] for i in dict.fromkeys(s for q in wrong for s in q['source_ids'])]
-        data=call(quiz_prompt(5,language,wrong if retry else None,'Gentle start' if retry else difficulty),sources)
-        if data is not None:
+with quiz:
+    st.markdown('<div class="lesson-caption">02 / Practise</div>',unsafe_allow_html=True)
+    st.subheader('Five questions. One step forward.')
+    st.caption('Check your understanding of the selected topic. Every answer comes with an explanation.')
+    if st.button('Generate 5-question quiz'):
+        raw = call(assessment_prompt(5, language), [section])
+        if raw:
             try:
-                items=validate_quiz(data,5,sources)
-                if retry and any(q['question'].strip().lower() in {w['question'].strip().lower() for w in wrong} for q in items):raise ValueError('The AI repeated an old question. Please retry.')
-                st.session_state.quiz={'id':uuid.uuid4().hex,'unit':unit,'items':items,'kind':'Targeted retry' if retry else 'Learning check'}
-                st.session_state.pop('responses',None)
-            except ValueError as exc:st.error(str(exc))
+                items = parse_questions(raw, 5)
+                st.session_state.quiz = {'id': uuid.uuid4().hex, 'items': items}
+                st.session_state.pop('result', None)
+            except (ValueError, KeyError, TypeError):
+                st.error('The AI returned an invalid quiz format. Please generate again.')
     if 'quiz' in st.session_state:
-        qz=st.session_state.quiz
-        st.caption(qz['kind'])
-        with st.form('q_'+qz['id']):
-            responses=[st.radio(f"{i+1}. {q['question']}",list(range(4)),format_func=lambda j,q=q:q['options'][j],index=None,key=qz['id']+str(i),disabled='responses' in st.session_state) for i,q in enumerate(qz['items'])]
-            done=st.form_submit_button('Check my understanding',disabled='responses' in st.session_state)
-        if done:
+        data = st.session_state.quiz
+        with st.form('quiz_' + data['id']):
+            responses = [st.radio(f"{i+1}. {q['question']}", range(4),
+                         format_func=lambda j, q=q: q['options'][j], index=None,
+                         key=f"{data['id']}_{i}") for i, q in enumerate(data['items'])]
+            submitted = st.form_submit_button('Submit answers')
+        if submitted:
+            if any(x is None for x in responses):
+                st.warning('Answer all five questions before submitting.')
+            else:
+                st.session_state.result = responses
+        if 'result' in st.session_state:
+            responses = st.session_state.result
+            score = sum(a == q['answer'] for a, q in zip(responses, data['items']))
+            st.metric('Your score', f'{score}/5')
+            for i, (a, q) in enumerate(zip(responses, data['items']), 1):
+                with st.expander(f"{i}. {'Correct' if a == q['answer'] else 'Worth another look'} — {q['options'][q['answer']]}",expanded=a != q['answer']):
+                    st.write(q['explanation'])
+            if score < 5:
+                st.info('Return to Learn & Ask to revise this topic, then try a new quiz.')
+
+with test:
+    st.markdown('<div class="lesson-caption">03 / Prepare</div>',unsafe_allow_html=True)
+    st.subheader('Take your practice with you.')
+    st.write('The test covers the selected topic. Each question carries one mark.')
+    count = st.selectbox('Questions / total marks', [5, 10])
+    if st.button('Generate practice test'):
+        raw = call(assessment_prompt(count, language), [section])
+        if raw:
             try:
-                grade(qz['items'],responses);st.session_state.history=record_attempt(st.session_state.history,qz,responses);st.session_state.responses=responses;st.rerun()
-            except ValueError as exc:st.warning(str(exc))
-        if 'responses' in st.session_state:
-            responses=st.session_state.responses;score=grade(qz['items'],responses)
-            st.metric('Your score',f'{score} / 5')
-            for i,(q,a) in enumerate(zip(qz['items'],responses),1):
-                with st.expander(f"{'✓' if a==q['answer'] else '↻'} {i}. {q['concept']}",expanded=a!=q['answer']):
-                    st.write('Your answer: '+q['options'][a]);st.write('Correct answer: '+q['options'][q['answer']]);st.write(q['explanation']);source_panel(q['source_ids'])
-            st.info('Next step: use Practise my mistakes above for fresh questions on the concepts you missed.' if score<5 else 'You answered this set correctly. Try another page or a harder set to check your understanding more broadly.')
-
-elif nav=='My progress':
-    st.subheader('Your progress belongs to you.')
-    st.caption('These records describe quiz attempts, not a certified ability score. No student name or email is required.')
-    history=st.session_state.history
-    if history:
-        st.dataframe([{'Attempt':i+1,'Unit':h['unit'],'Activity':h['kind'],'Score':f"{h['score']}/{h['total']}"} for i,h in enumerate(history)],use_container_width=True,hide_index=True)
-        weak={}
-        for h in history:
-            for d in h['details']:
-                if not d['correct']:weak[d['concept']]=weak.get(d['concept'],0)+1
-        if weak:
-            st.markdown('**Concepts missed across your saved attempts**')
-            st.dataframe([{'Concept':k,'Incorrect answers':v} for k,v in sorted(weak.items(),key=lambda x:-x[1])],hide_index=True,use_container_width=True)
-        st.download_button('Save my progress (.json)',json.dumps({'version':2,'history':history},ensure_ascii=False),'schoolix-progress.json','application/json')
-    else:st.info('Complete your first learning check to see results here.')
-    uploaded=st.file_uploader('Restore a saved progress file',type=['json'])
-    if st.button('Restore progress',disabled=uploaded is None):
-        try:
-            if uploaded.size>1_000_000:raise ValueError('Progress file is too large.')
-            restored=import_history(json.loads(uploaded.getvalue()),set(byid))
-            st.session_state.history=restored;st.success('Progress restored.');st.rerun()
-        except (ValueError,KeyError,TypeError) as exc:st.error('Could not restore this progress file. Check that it was exported by this version.')
-    if st.checkbox('I want to clear my saved session attempts') and st.button('Clear progress'):
-        st.session_state.history=[];st.session_state.pop('responses',None);st.session_state.pop('quiz',None);st.rerun()
-    st.caption('Download before leaving. Streamlit session data is temporary; importing a file replaces the current history. Progress files can be edited and are for personal study, not official assessment.')
-
-elif nav=='Practice paper':
-    st.subheader('Your textbook-only practice session')
-    st.write('**37 marks · Self-study edition · Separate answer guide**')
-    st.info('Adapted from the supplied Taleem360 pairing scheme dated 9 April 2026. This is a third-party scheme, not an independently verified board notification. This subset is not a complete 75-mark board paper.')
-    with st.expander('See marks and scope',expanded=False):
-        st.dataframe([{'Section':s['label'],'Offered':s['n'],'Attempt':s['attempt'],'Marks each':s['marks'],'Total':s['attempt']*s['marks']} for s in BLUEPRINT],hide_index=True,use_container_width=True)
-        st.write('Excluded: Q1(A), mixed-source Q1(D), and Q6–Q9 because they draw on the separate Grammar and Composition book. Units 5, 8 and 10 are excluded here by the supplied scheme, but remain available for learning.')
-        st.caption('For reliable unit attribution, this version draws paper questions from the named eligible units; review pages are available in learning mode but are not used as paper sources.')
-        st.write('No exam duration is set because the supplied scheme does not specify one for this custom subset. Written responses are self-checked using an AI-generated answer guide.')
-    st.caption('Build one section at a time to manage API usage. The app preserves completed sections during this session. PDF download becomes available after all sections pass structural checks.')
-    spec=st.selectbox('Choose paper section',BLUEPRINT,format_func=lambda s:s['label'])
-    if st.button('Generate / replace this section',type='primary'):
-        sources=[]
-        # Balance evidence across the scheme groups instead of letting one unit dominate.
-        for u in spec['units']:
-            if u in (12,13):
-                continue  # Review OCR mixes excluded chapters; prefer identifiable eligible units.
-            candidates=[r for r in rows if r['unit']==u]
-            if spec['id']=='translation':
-                candidates=[r for r in candidates if r['page'] in {2,3,4,17,18,19,50,51,52,73,74,75,107,108,109}]
-            elif spec['id']=='poem':candidates=[r for r in candidates if r['page'] in {32,33,86,87,88,89}]
-            elif spec['id']=='play':candidates=search.find('Abel Mrs Slater Jordan possessions grandfather marriage',u,k=7)
-            elif 'spell' in spec['id'] or 'meaning' in spec['id'] or spec['id']=='words':
-                candidates=search.find('Glossary Words Meanings Vocabulary',u,k=2) or candidates[:2]
-            else:candidates=search.find('Reading Critical Thinking Answer questions',u,k=2) or candidates[:2]
-            sources.extend(candidates[:7] if spec['id']=='play' else candidates[:3])
-        data=call(paper_prompt(spec),sources)
-        if data is not None:
-            try:st.session_state.paper[spec['id']]=validate_paper_group(data,spec,sources);st.success('Section ready. Choose the next section above.')
-            except ValueError as exc:st.error(str(exc))
-    paper=st.session_state.paper
-    st.progress(len(paper)/len(BLUEPRINT),text=f'{len(paper)} of {len(BLUEPRINT)} sections ready')
-    for s in BLUEPRINT:
-        if s['id'] in paper:
-            with st.expander(s['label']+' · Ready'):
-                st.caption(f"Attempt {s['attempt']} of {s['n']}; {s['marks']} mark(s) each")
-                for i,q in enumerate(paper[s['id']],1):
-                    st.write(f"{i}. {q['question']}")
-                    if s['type']=='mcq':
-                        for j,o in enumerate(q['options']):st.write(f'{chr(65+j)}. {o}')
-    if len(paper)==len(BLUEPRINT):
-        a,b=st.columns(2)
-        a.download_button('Download question paper PDF',paper_pdf(paper,BLUEPRINT,rows),'schoolix-practice.pdf','application/pdf',use_container_width=True)
-        b.download_button('Download answer guide PDF',paper_pdf(paper,BLUEPRINT,rows,True),'schoolix-answer-guide.pdf','application/pdf',use_container_width=True)
-        st.caption('Attempt the paper before opening the answer guide. Model answers are AI-generated and should be checked against the textbook.')
-    if paper and st.button('Start a fresh paper'):
-        st.session_state.paper={};st.rerun()
+                items = parse_questions(raw, count)
+                title = f'Schoolix360 AI - Grade 9 English\n{unit}\n{topic}'
+                st.session_state.test = export_test(items, title)
+            except (ValueError, KeyError, TypeError):
+                st.error('The AI returned an invalid test format. Please generate again.')
+    if 'test' in st.session_state:
+        paper, answer_key = st.session_state.test
+        st.text(paper)
+        st.download_button('Download question paper (.txt)', paper.encode('utf-8'), 'schoolix360-test.txt', 'text/plain')
+        st.download_button('Download separate answer key (.txt)', answer_key.encode('utf-8'), 'schoolix360-answers.txt', 'text/plain')
+        st.caption('Open the text file in Word or Google Docs to format and export it as PDF.')
 
 st.divider()
-st.caption('Schoolix360 AI · Learning support, not official grading · Source OCR may contain errors · Questions and selected excerpts are sent to Google when you use AI features')
+st.markdown('<div class="footer"><span>✦ Schoolix360 AI · Build confidence, one topic at a time.</span><span>AI-generated study support · Not an official board resource</span></div>',unsafe_allow_html=True)
+st.caption('Based on supplied notes. Textbook content and page references remain unverified; check important answers against your original book.')
