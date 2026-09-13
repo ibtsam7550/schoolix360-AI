@@ -1,76 +1,107 @@
-# Schoolix360 AI — Grade 9 English
+# Schoolix360 AI — Student Edition 2
 
-A hackathon prototype for learning, asking questions, practising quizzes, and generating MCQ tests. Uses Gemini and keyword-based TF-IDF retrieval over supplied English study notes.
+A textbook-only English learning companion for students who cannot afford extra academy support. Built from the supplied English-book.txt and the supplied Taleem360 pairing-scheme PDF. This is an upgrade of the original Streamlit starter, not a separate website platform.
 
-## Included coverage
-- Unit 1: The Saviour of Mankind
-- Unit 2: Patriotism
-- Unit 3: Daffodils
+## What is included
+- Redesigned responsive Overview, Learn & ask, Practice, My progress and Practice paper workspaces.
+- All 11 English textbook units and both reviews: 164 content pages, 170 source chunks.
+- Simple English, Urdu and Roman Urdu explanations. Urdu-script questions are translated into an English search query before retrieval (two API calls). Roman Urdu search is best done with English keywords or by selecting a page.
+- Cached TF-IDF retrieval and programmatically validated source IDs. Expand the evidence behind an answer.
+- Five-question checks, deterministic marking against the AI answer key, explanations and targeted fresh questions based on the last attempt's mistakes.
+- Anonymous session progress; export/import a JSON file to continue later. No hosted database or student accounts required.
+- A 37-mark textbook-only paper subset, generated section by section, with separate question-paper and answer-guide PDFs.
+- Bundled fonts and right-to-left shaping for Urdu PDF text.
 
-The 22 supplied sections contain summaries and grammar notes, not a complete textbook transcription. The original English PDF was not in the supplied ZIP. Content and page references remain unverified; compare them with your actual textbook before claiming textbook accuracy or curriculum alignment. Sections.json is preserved as supplied.
+## The scope you requested
+Only the English textbook is used. Grammar, vocabulary, comprehension and writing exercises physically present in that book remain in scope. The separate English Grammar and Composition 9–10 book is not used. There are no teacher accounts or teacher editing/review workflows.
 
-## Deploy using only a browser
-1. Extract this ZIP on your computer.
-2. Open your existing GitHub repository. Choose Add file > Upload files.
-3. Upload app.py, core.py, Sections.json, requirements.txt and README.md into the repository root, not a subfolder. Upload .gitignore too if visible. If requirements.txt or README.md already exists, replace it with this version.
-4. Commit changes. Never upload your real API key.
-5. Open https://share.streamlit.io/ and sign in with GitHub.
-6. Click Create app, choose your repository and branch (normally main), and set the main file to app.py.
-7. Open Advanced settings. Choose Python 3.11 if available. Paste these settings into Secrets, replacing the key placeholder:
+## Important source limitations
+English-book.txt contains noisy OCR, including watermark interference and garbled lines. Text was segmented at its original form-feed page breaks, without inventing corrections. Four front-matter pages precede printed page 1; printed page labels are inferred by subtracting four from the OCR page position. Unit boundaries agree with the OCR contents table and chapter openings, but the original English book PDF was not supplied. Therefore page labels and quotations are NOT visually verified. The app says so in its source panel. Inspect the original textbook when checking an answer.
+
+The model is instructed not to reconstruct unreadable passages. Citation validation verifies source IDs, not the factual entailment of every sentence. Translation passages and quoted poetry in papers must match their cited OCR excerpts, but OCR itself can be wrong. An original readable PDF would allow stronger verification and correction.
+
+## Paper scope and marks
+The supplied scheme is a Taleem360 document dated 9 April 2026; it has not been independently verified as an official board notification.
+
+Included:
+- Q1 B spellings: 4 x 1 = 4, split 2/2 across the two unit groups.
+- Q1 C meanings: 5 x 1 = 5, split 2/3 across the groups.
+- Q2 A short answers: offer 5, attempt 3 x 2 = 6.
+- Q2 B play: offer 2, attempt 1 x 4 = 4.
+- Q3 translation: offer 3, attempt 2 x 4 = 8; two source paragraphs from units 1/2/4/6 and one from unit 9.
+- Q4 poetry: offer two alternatives (summary or stanza), attempt one = 5.
+- Q5 words/phrases: offer 8, attempt 5 x 1 = 5.
+- Total = 37.
+
+Excluded: Q1 A, mixed-source Q1 D, and Q6–Q9. The supplied full scheme totals 75; this app does NOT claim to generate a complete official 75-mark paper. No duration is invented for the custom subset. Paper generation excludes units 5, 8 and 10 as specified in the supplied scheme. These units remain accessible in learning mode. Review-unit excerpts may mix excluded chapters, so this version draws paper evidence from the named eligible units rather than the review pages. Reviews remain available for study.
+
+Paper sections have structural checks, exact quote checks where applicable, and source-ID checks. This does not certify semantic correctness or exact official difficulty. Written answers are for self-review using model answers; there is no automatic subjective grading.
+
+## Update your existing GitHub deployment
+1. Keep a copy of the original ZIP.
+2. Extract this ZIP.
+3. Open the existing GitHub repository and use Add file → Upload files.
+4. Upload/replace app.py, core.py, Sections.json, requirements.txt and README.md.
+5. Also upload pdf_export.py, units.json, test_app.py and the entire assets folder. Keep assets as a folder; do not flatten its files into the root.
+6. Add .streamlit/config.toml from the package if your file manager shows it. If hidden, use GitHub Add file → Create new file; name it .streamlit/config.toml and copy the settings below. The app's main styling works even if this optional theme file is omitted.
+7. Commit the changes. Old Extract.py, BuildIndex.py, Retrieve.py and Api.py can remain unused.
+8. In Streamlit app settings → Secrets, keep your real key and set:
 
 ```toml
-GEMINI_API_KEY = "PASTE_YOUR_REAL_KEY_HERE"
-GEMINI_MODEL = "gemini-3.8-flash"
+GEMINI_API_KEY = "YOUR_EXISTING_REAL_KEY"
+GEMINI_MODEL = "gemini-2.5-flash"
 ```
 
-The model above is the example in Google's documentation checked during preparation. Model access and quota depend on your account. If unavailable, use an exact text model ID supported by the Interactions API and available to your account. Change GEMINI_MODEL in Streamlit Secrets; no code edit is needed.
+Do not upload the real key to GitHub. The REST generateContent API is used in this version. Model availability and quotas depend on your Google account. The default model was checked against Google's model documentation; if inaccessible, use an available generateContent model ID. The old starter's model setting does not automatically change when you replace the code: edit Secrets explicitly.
 
-8. Save and Deploy. Wait for installation and open the app URL.
-9. Select Unit 2, Gerunds, Infinitives, and Participles. Click Teach me this topic.
-10. Ask "What is a gerund?" and inspect the study notes expander.
-11. Generate a quiz, complete it and submit. Generate a practice test and download both text files.
-12. Open the public app link in a signed-out browser and on a phone before submitting.
+9. Main file remains app.py; Python 3.11 or 3.12 is suitable. Reboot the app from Manage app if necessary so dependencies install.
+10. Test without being logged into Streamlit, and on a phone.
 
-## How it works
-Learn retrieves the selected topic's note. Ask ranks notes in the selected unit using TF-IDF keyword similarity and sends up to three positive matches to Gemini with source IDs. A prompt instructs Gemini to stay within the notes and acknowledge missing support. Source references are displayed from the stored records. Keyword overlap does not guarantee that a passage answers the question; review important outputs.
+Optional theme file:
+```toml
+[theme]
+primaryColor = "#127D78"
+backgroundColor = "#F6F8F7"
+secondaryBackgroundColor = "#EAF0ED"
+textColor = "#173B40"
+font = "sans serif"
+[server]
+maxUploadSize = 3
+```
 
-Quiz/test generation uses the selected topic's note. JSON structure, option count, answer index and question count are validated. Marking is deterministic against the generated answer key, but the key's factual correctness requires review. Generated tests contain 5 or 10 MCQs worth one mark each. Downloads are UTF-8 text, not PDFs. Open them in Word or Google Docs to export PDFs.
+## First demonstration
+1. Select Unit 3: Daffodils.
+2. Open Learn & ask. Choose inferred printed page 32 and explain the page.
+3. Select Urdu and repeat, then inspect source text.
+4. Open Practice; choose page 32 and generate a five-question check.
+5. Complete it. If you miss a concept, use Practise my mistakes for fresh questions.
+6. Open My progress and save your progress file.
+7. Open Practice paper. Generate each of its nine sections. Quota limits may require spreading requests out. Failed sections can be retried; completed ones remain in the current session.
+8. Once all sections are ready, download the paper and separate guide. Do not open the guide until after attempting the paper.
 
 ## Local run (optional)
-Use Python 3.11 or newer:
-
 ```bash
 python -m pip install -r requirements.txt
 python -m streamlit run app.py
 ```
+Create .streamlit/secrets.toml locally with the key settings above; never commit it.
 
-For local credentials create .streamlit/secrets.toml using the settings above. Never commit that file. Use a fresh project directory; the previous Extract.py, BuildIndex.py, Retrieve.py and Api.py are not used.
+## Test and validation
+```bash
+python -m unittest test_app.py
+```
+Offline tests cover book coverage, unit-filtered retrieval, unsupported queries, source-ID rejection, score accuracy, duplicate-submission protection, progress import validation, quote matching, API response parsing and a Streamlit quiz-to-targeted-retry flow with mocked AI responses. PDF English/Urdu layout was checked separately. UI workflows were checked with Streamlit AppTest; desktop/mobile browser screenshot verification was unavailable in this environment.
+
+Live Gemini generation, quota and cloud deployment were not tested with your private account. AI-generated questions, translations and answer keys require review. No real student-impact measurements are claimed. Targeted retry is based on the latest completed quiz, or the latest saved/imported attempt for the selected unit; progress summaries show historical mistakes, not a validated mastery estimate. Changing topics does not silently erase saved attempt history.
 
 ## Troubleshooting
-- ModuleNotFoundError: confirm this package's requirements.txt is beside app.py; use Streamlit Manage app > Reboot after correcting it.
-- Sections.json missing: filename is case-sensitive and must be beside core.py.
-- API request failed: check key validity, model access, Google AI Studio usage/quota, and the configured model ID. Do not share raw credentials or unredacted logs.
-- No search match: use English keywords and choose the appropriate unit. Urdu/Roman Urdu are output-language options, not multilingual retrieval.
-- Invalid quiz format: generate again; malformed assessments are rejected rather than displayed.
-- Scores disappear: session-only storage is intentional. Changing unit, topic or language starts fresh work.
+- Missing font/file: upload the assets folder and units.json, preserving names and capitalization.
+- ModuleNotFoundError: replace requirements.txt and reboot Streamlit.
+- 404/model unavailable: change GEMINI_MODEL in Secrets to an available supported model ID.
+- 429/quota reached: inspect Google AI Studio usage and retry later. Free hosting does not include unlimited AI calls.
+- Invalid source/quote: retry the section. Do not weaken validation just to make a paper export.
+- Wrong text/page: verify the OCR with the original PDF; the original is needed for correction.
+- Progress disappeared: restore your downloaded JSON. The server session is temporary; papers are also session-only.
 
-## Five-minute demo
-0:00–0:35 Explain the problem and target students.
-0:35–1:40 Teach one grammar topic and show Urdu or Roman Urdu explanation.
-1:40–2:25 Ask a question and show the retrieved notes; explain their verification status.
-2:25–3:20 Complete a quiz and show score and feedback.
-3:20–4:05 Generate and download a test and separate key.
-4:05–5:00 Explain your measured impact and limitations.
-
-## Submission checklist
-- Live app URL, tested outside your own logged-in browser.
-- GitHub repository URL and this README.
-- Five-minute demonstration video.
-- Presentation: problem, students, solution, retrieval workflow, measured results, next steps.
-- Impact assessment with actual results. Record who tested, task, baseline time, app time and accuracy. Time saved percentage = (baseline time - app time) / baseline time * 100. Do not invent pilot results.
-
-## Limits and next steps
-No accounts, database, permanent progress, full-book coverage, handwritten marking, or official board validation. AI can make mistakes. Session throttling is not a global spending cap; configure account quota/budget controls for public use. Students should not enter personal information; questions and relevant notes are sent to Google for generation.
-
-## Verification status
-Python syntax, note retrieval, quiz parser, separate test export, Streamlit startup and quiz submission were checked locally. A mocked API response verified a complete 5/5 quiz submission; this does not verify live AI output quality. Live Gemini generation and cloud deployment require your account and have not been verified by the authoring assistant. Follow the deployment checks above before submitting.
+## Data and costs
+Source files are static; no paid database is required. Questions and selected excerpts go to Google when AI features are used. Keep personal data out of questions. API billing is separate from hosting; session throttling is not a global cost cap. Before a public launch, review your API usage limits and permission to distribute the textbook material. Bundled font licenses are under assets/.
