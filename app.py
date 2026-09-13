@@ -7,25 +7,25 @@ from html import escape
 from pathlib import Path
 import streamlit as st
 from core import (load_data, Search, ai, answer_prompt, validate_answer, quiz_prompt, validate_quiz,
-                  grade, record_attempt, import_history, BLUEPRINT, paper_prompt, validate_paper_group)
+                  grade, record_attempt, import_history, BLUEPRINT, paper_prompt, validate_paper_group, list_text_models)
 from pdf_export import export_pdf,paper_pdf
 
 st.set_page_config(page_title='Schoolix360 · Learn your way',page_icon='✦',layout='wide')
 st.markdown('''<style>
 .block-container{max-width:1180px;padding-top:1.8rem;padding-bottom:2rem}
-h1,h2,h3{letter-spacing:-.035em} [data-testid="stSidebar"]{background:#eaf0ed}
+h1,h2,h3{letter-spacing:-.035em}
 .hero{background:linear-gradient(120deg,#102e38,#164d50);padding:32px 36px;border-radius:22px;color:#fff;margin-bottom:24px;position:relative;overflow:hidden}
 .hero:after{content:'✦';position:absolute;right:38px;top:-25px;font-size:180px;color:#ffffff0c}
 .eyebrow{font-size:11px;letter-spacing:2.2px;text-transform:uppercase;font-weight:700;color:#9cded3}
 .hero h1{font-size:38px;color:white;margin:8px 0}.hero p{color:#d0e2e4;max-width:650px;margin-bottom:0;font-size:16px}
 .pill{display:inline-block;border:1px solid #ffffff30;border-radius:30px;padding:5px 12px;font-size:12px;margin-top:18px;margin-right:8px;color:#dff7ef}
-.card{background:white;border:1px solid #dce5e0;border-radius:16px;padding:22px;height:100%;margin:8px 0 20px}
-.card h3{font-size:20px;margin:8px 0}.card p{font-size:14px;color:#52676a}.card .number{color:#127d78;font-size:12px;font-weight:700;letter-spacing:1px}
-[data-testid="stMetric"]{background:white;border:1px solid #dce5e0;border-radius:14px;padding:16px}
+.card{color:inherit;background:transparent;border:1px solid #80908a60;border-radius:16px;padding:22px;height:100%;margin:8px 0 20px}
+.card h3{font-size:20px;margin:8px 0;color:inherit!important}.card p{font-size:14px;color:inherit;opacity:.85}.card .number{color:inherit;font-size:12px;font-weight:700;letter-spacing:1px}
+[data-testid="stMetric"]{background:transparent;border:1px solid #80908a60;border-radius:14px;padding:16px}
 .stButton>button{border-radius:10px;min-height:42px}.stDownloadButton>button{border-radius:10px}
-[data-testid="stExpander"]{background:#fff;border-radius:12px}
-.label{color:#68817e;font-size:12px;letter-spacing:1.5px;text-transform:uppercase}
-.urdu{direction:rtl;text-align:right;font-family:'Noto Nastaliq Urdu','DejaVu Sans',serif;font-size:20px;line-height:2.1;white-space:pre-wrap;background:white;padding:24px;border-radius:16px;border:1px solid #dce5e0}
+[data-testid="stExpander"]{border-radius:12px}
+.label{color:inherit;font-size:12px;letter-spacing:1.5px;text-transform:uppercase}
+.urdu{direction:rtl;text-align:right;font-family:'Noto Nastaliq Urdu','DejaVu Sans',serif;font-size:20px;line-height:2.1;white-space:pre-wrap;background:transparent;color:inherit;padding:24px;border-radius:16px;border:1px solid #dce5e0}
 @media(max-width:650px){.hero{padding:22px}.hero h1{font-size:28px}.block-container{padding:1rem}.hero:after{display:none}}
 </style>''',unsafe_allow_html=True)
 
@@ -42,7 +42,7 @@ rows,units,search=resources();byid={r['id']:r for r in rows}
 def setting(name,default=''):
     try:return st.secrets.get(name,os.getenv(name,default))
     except FileNotFoundError:return os.getenv(name,default)
-key=setting('GEMINI_API_KEY');model=setting('GEMINI_MODEL','gemini-2.5-flash')
+key=setting('GEMINI_API_KEY');model=setting('GEMINI_MODEL','').strip()
 for field,value in [('history',[]),('paper',{}),('nav','Overview')]:
     if field not in st.session_state:st.session_state[field]=value
 
@@ -57,6 +57,31 @@ with st.sidebar:
     st.markdown('**A little practice. A clearer tomorrow.**')
     st.caption('No student registration. Save a progress file to continue on another day.')
     if not key:st.info('Browse the book now. Add your Gemini key in Secrets to enable AI.')
+    setup=str(setting('ENABLE_MODEL_SETUP','false')).lower()=='true'
+    if setup:
+        with st.expander('AI connection setup',expanded=True):
+            st.caption('Temporary setup panel. Turn ENABLE_MODEL_SETUP off after saving the working model in Secrets. Listing does not prove free quota or JSON support.')
+            if st.button('Load available Gemini models',disabled=not key):
+                try:
+                    with st.spinner('Reading the Google model catalogue…'):
+                        st.session_state['available_models']=list_text_models(key)
+                    st.session_state.pop('model_candidate',None)
+                except ValueError as exc:st.error(str(exc))
+            choices=st.session_state.get('available_models',[])
+            if choices:
+                candidate=st.selectbox('Model to test',choices,key='model_candidate')
+                if st.button('Test selected model'):
+                    try:
+                        with st.spinner('Making one small JSON generation request…'):
+                            check=ai(key,candidate,'Connection test: return exactly {"ok":true}.',[])
+                        if check!={'ok':True}:raise ValueError('The model did not return the expected JSON. Try another candidate.')
+                        st.session_state['tested_model']=candidate
+                        st.success('JSON generation succeeded. Save this model in Secrets:')
+                        st.code('GEMINI_MODEL = '+json.dumps(candidate)+'\nENABLE_MODEL_SETUP = false',language='toml')
+                    except ValueError as exc:st.error(str(exc))
+            elif 'available_models' in st.session_state:
+                st.warning('No matching text-generation candidates were returned. Check API project access in Google AI Studio.')
+
 unit=selected['id'];unit_rows=[r for r in rows if r['unit']==unit]
 st.markdown(f'''<div class="hero"><div class="eyebrow">English 9 · Punjab textbook · Student edition</div><h1>Learn your way.<br>Grow with every attempt.</h1><p>Understand a lesson, discover what needs practice, and take your next step with confidence.</p><span class="pill">English + Urdu</span><span class="pill">Textbook sources</span><span class="pill">Practice that responds to you</span></div>''',unsafe_allow_html=True)
 nav=st.radio('Your workspace',['Overview','Learn & ask','Practice','My progress','Practice paper'],horizontal=True,key='nav',label_visibility='collapsed')
@@ -64,6 +89,7 @@ st.divider()
 
 def call(task,sources):
     if not key:st.error('Add GEMINI_API_KEY in Streamlit Settings → Secrets.');return None
+    if not model:st.error('Set GEMINI_MODEL in Secrets. Enable ENABLE_MODEL_SETUP temporarily to list and test models.');return None
     if time.time()-st.session_state.get('last_call',0)<2:st.info('Please wait a moment before the next request.');return None
     st.session_state.last_call=time.time()
     try:

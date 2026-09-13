@@ -35,9 +35,37 @@ class CoreTests(unittest.TestCase):
    post.return_value.json.return_value={'candidates':[{'finishReason':'STOP','content':{'parts':[{'text':'{"answer":"hello"}'}]}}]}
    self.assertEqual(ai('SECRET','gemini-2.5-flash','task',self.source),{'answer':'hello'})
    self.assertNotIn('SECRET',post.call_args.args[0])
+ def test_list_pagination_filter_and_header(self):
+  with patch('core.requests.get') as get:
+   first=unittest.mock.Mock(status_code=200)
+   first.json.return_value={'models':[{'name':'models/gemini-example','supportedGenerationMethods':['generateContent']},{'name':'models/gemini-image','supportedGenerationMethods':['generateContent']}],'nextPageToken':'next'}
+   second=unittest.mock.Mock(status_code=200)
+   second.json.return_value={'models':[{'name':'models/gemini-other','supportedGenerationMethods':['generateContent']},{'name':'models/embed','supportedGenerationMethods':['embedContent']}]}
+   get.side_effect=[first,second]
+   self.assertEqual(list_text_models('SECRET'),['gemini-example','gemini-other'])
+   self.assertEqual(get.call_args.kwargs['params']['pageToken'],'next')
+   self.assertEqual(get.call_args.kwargs['headers']['x-goog-api-key'],'SECRET')
+   self.assertNotIn('SECRET',get.call_args.args[0])
+ def test_setup_panel(self):
+  from streamlit.testing.v1 import AppTest
+  with patch.dict(os.environ,{'GEMINI_API_KEY':'fake','ENABLE_MODEL_SETUP':'true','GEMINI_MODEL':''}):
+   at=AppTest.from_file(str(ROOT/'app.py'),default_timeout=20).run()
+   with patch('core.list_text_models',return_value=['gemini-example']):
+    next(b for b in at.button if b.label=='Load available Gemini models').click().run()
+    self.assertFalse(at.exception)
+   with patch('core.ai',return_value={'ok':True}):
+    next(b for b in at.button if b.label=='Test selected model').click().run()
+    self.assertFalse(at.exception)
+    self.assertEqual(at.session_state['tested_model'],'gemini-example')
+    self.assertTrue(any('GEMINI_MODEL' in c.value for c in at.code))
+ def test_theme_has_no_fixed_light_surfaces(self):
+  source=(ROOT/'app.py').read_text()
+  self.assertNotIn('background:white',source)
+  self.assertNotIn('background:#fff;',source)
+  self.assertIn('color:inherit!important',source)
  def test_streamlit_quiz_flow(self):
   from streamlit.testing.v1 import AppTest
-  with patch.dict(os.environ,{'GEMINI_API_KEY':'fake'}):
+  with patch.dict(os.environ,{'GEMINI_API_KEY':'fake','GEMINI_MODEL':'test-model'}):
    at=AppTest.from_file(str(ROOT/'app.py'),default_timeout=20).run()
    self.assertFalse(at.exception)
    for nav in ['Learn & ask','My progress','Practice paper','Practice']:

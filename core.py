@@ -168,3 +168,34 @@ def validate_paper_group(data,spec,sources):
         groups=[{byid[i]['unit'] for i in q['source_ids']} for q in qs]
         if sum(bool(g & {9}) for g in groups)!=1 or sum(bool(g & {1,2,4,6}) for g in groups)!=2:raise ValueError('Translation unit distribution did not match the scheme. Retry.')
     return qs
+
+
+def list_text_models(key):
+    """List advertised generateContent Gemini candidates; generation must still be tested."""
+    names=set(); token=None;seen_tokens=set()
+    for _ in range(20):
+        params={'pageSize':1000}
+        if token:params['pageToken']=token
+        try:
+            response=requests.get('https://generativelanguage.googleapis.com/v1beta/models',
+                                  headers={'x-goog-api-key':key},params=params,timeout=30)
+        except requests.RequestException:
+            raise ValueError('Could not reach the model catalogue. Try again later.') from None
+        if response.status_code!=200:
+            hints={400:'Check your API key and Google project.',401:'Check your API key.',403:'The key cannot access this catalogue.',429:'Model listing was rate-limited. Retry later.'}
+            raise ValueError(hints.get(response.status_code,f'Could not list models (HTTP {response.status_code}).'))
+        try:
+            body=response.json()
+            for entry in body.get('models',[]):
+                name=entry.get('name','').removeprefix('models/')
+                if ('generateContent' in entry.get('supportedGenerationMethods',[]) and name.startswith('gemini-')
+                    and not any(x in name.lower() for x in ['image','audio','tts','robotics','computer-use','live'])
+                    and re.fullmatch(r'[A-Za-z0-9._-]+',name)):
+                    names.add(name)
+            token=body.get('nextPageToken')
+        except (ValueError,TypeError,AttributeError):
+            raise ValueError('Unexpected model-catalogue response. Retry later.') from None
+        if not token:return sorted(names)
+        if not isinstance(token,str) or token in seen_tokens:raise ValueError('The model catalogue returned invalid pagination.')
+        seen_tokens.add(token)
+    raise ValueError('Model catalogue exceeded the page limit. Please retry later.')

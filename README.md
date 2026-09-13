@@ -1,4 +1,8 @@
-# Schoolix360 AI — Student Edition 2
+# Update 2.1: dark-mode and model setup fixes
+
+Read FIXES.md first. Only app.py and core.py need replacing on an existing v2 deployment.
+
+# Schoolix360 AI — Student Edition 2.1
 
 A textbook-only English learning companion for students who cannot afford extra academy support. Built from the supplied English-book.txt and the supplied Taleem360 pairing-scheme PDF. This is an upgrade of the original Streamlit starter, not a separate website platform.
 
@@ -49,10 +53,10 @@ Paper sections have structural checks, exact quote checks where applicable, and 
 
 ```toml
 GEMINI_API_KEY = "YOUR_EXISTING_REAL_KEY"
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "PASTE_TESTED_MODEL_ID_HERE"
 ```
 
-Do not upload the real key to GitHub. The REST generateContent API is used in this version. Model availability and quotas depend on your Google account. The default model was checked against Google's model documentation; if inaccessible, use an available generateContent model ID. The old starter's model setting does not automatically change when you replace the code: edit Secrets explicitly.
+Do not upload the real key to GitHub. The REST generateContent API is used in this version. Model availability and quotas depend on your Google account. There is no guessed default model. Use the temporary model setup panel described in FIXES.md to list candidates and test a JSON response, then save a working model ID in Secrets. The old starter's model setting does not automatically change when you replace the code: edit Secrets explicitly.
 
 9. Main file remains app.py; Python 3.11 or 3.12 is suitable. Reboot the app from Manage app if necessary so dependencies install.
 10. Test without being logged into Streamlit, and on a phone.
