@@ -1,6 +1,9 @@
 """Source-bound learning, transparent scoring and textbook-only paper rules."""
 import json
 import re
+import time
+import random
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from datetime import datetime, timezone
 import requests
@@ -36,13 +39,33 @@ def ai(key,model,task,sources):
     payload={'systemInstruction':{'parts':[{'text':SYSTEM}]},
              'contents':[{'role':'user','parts':[{'text':json.dumps({'task':task,'excerpts':sources},ensure_ascii=False)}]}],
              'generationConfig':{'responseMimeType':'application/json','temperature':0.35,'maxOutputTokens':16000}}
-    try:
-        response=requests.post(f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',
-                    headers={'x-goog-api-key':key,'Content-Type':'application/json'},json=payload,timeout=120)
-    except requests.RequestException:
-        raise ValueError('Connection timed out or failed. Please retry when your connection is stable.') from None
+    # Retry only explicit transient HTTP errors; never silently switch models.
+    for attempt in range(3):
+        try:
+            response=requests.post(f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',
+                        headers={'x-goog-api-key':key,'Content-Type':'application/json'},json=payload,timeout=(10,45))
+        except requests.RequestException:
+            raise ValueError('The connection failed or timed out. This request was not automatically repeated because its processing status is unknown. Try a small model test first.') from None
+        if response.status_code not in (500,502,503,504) or attempt==2:
+            break
+        delay=2**(attempt+1)+random.uniform(0,0.5)
+        retry_after=response.headers.get('Retry-After')
+        if isinstance(retry_after,str):
+            try:
+                requested=float(retry_after)
+            except ValueError:
+                try:
+                    requested=(parsedate_to_datetime(retry_after)-datetime.now(timezone.utc)).total_seconds()
+                except (TypeError,ValueError,OverflowError):
+                    requested=0
+            if requested>30:
+                raise ValueError('Google asked for a longer waiting period. Stop retrying now and test the model again later.')
+            delay=max(delay,requested)
+        time.sleep(delay)
     if response.status_code!=200:
         msg={400:'Check your model ID and API configuration.',401:'Check your API key.',403:'Check API key permissions.',404:'Model unavailable. Update GEMINI_MODEL in Secrets.',429:'Google quota reached. Check usage in AI Studio and retry later.'}
+        if response.status_code in (500,502,503,504):
+            raise ValueError(f'Google returned HTTP {response.status_code} after 3 attempts. Stop repeating this action for now. Use AI connection setup to test a different listed text model; save its ID in Secrets only after a successful test. If every model test fails, retry later. No automatic model switch was made.')
         raise ValueError(msg.get(response.status_code,f'Google service error ({response.status_code}). Try again later.'))
     try:
         result=response.json(); candidate=result.get('candidates',[])[0]
